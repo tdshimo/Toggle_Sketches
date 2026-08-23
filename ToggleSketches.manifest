@@ -1,0 +1,11 @@
+{
+	"autodeskProduct":	"Fusion",
+	"type":	"addin",
+	"id":	"8f2b1d3a-4e5c-6b7a-8f9e-0d1c2b3a4e5f",
+	"author":	"",
+	"description":	"Toggles all sketch visibility with hotkey B",
+	"version":	"1.0",
+	"runOnStartup":	true,
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true
+}
