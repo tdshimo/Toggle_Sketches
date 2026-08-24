@@ -1,167 +1,119 @@
+# ToggleSketches.py
 import adsk.core
 import adsk.fusion
 import traceback
+import os
 
-_app = None
-_ui = None
-_cmd_def = None
-_handlers = []
+handlers = []
+ADDIN_PATH = os.path.dirname(os.path.abspath(__file__))
 
-CMD_ID = 'ToggleSketchesFolderQATCmd'
-CMD_NAME = 'Toggle Sketches Folder'
-CMD_TOOLTIP = 'Hides or shows active sketches by toggling the parent folder. Applies only to the active component.'
-
-class ToggleSketchesCommandCreatedEventHandler(adsk.core.CommandCreatedEventHandler):
-    def __init__(self):
-        super().__init__()
-
+class SketchVisibilityToggleExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
-            cmd = args.command
-            on_execute = ToggleSketchesCommandExecuteEventHandler()
-            cmd.execute.add(on_execute)
-            _handlers.append(on_execute)
-        except:
-            if _ui:
-                _ui.messageBox(f'Created Handler Failed:\n{traceback.format_exc()}')
-
-class ToggleSketchesCommandExecuteEventHandler(adsk.core.CommandEventHandler):
-    def __init__(self):
-        super().__init__()
-
-    def notify(self, args):
-        try:
-            design = adsk.fusion.Design.cast(_app.activeProduct)
+            app = adsk.core.Application.get()
+            ui = app.userInterface
+            design = adsk.fusion.Design.cast(app.activeProduct)
             if not design:
                 return
 
-            active_comp = design.activeComponent
-            if not active_comp:
+            # Determine active target component
+            active_target = design.activeEditObject
+            if not active_target:
+                active_target = design.rootComponent
+
+            # Extract the component object regardless of whether active_target is Component or Occurrence
+            target_comp = None
+            if isinstance(active_target, adsk.fusion.Component):
+                target_comp = active_target
+            elif isinstance(active_target, adsk.fusion.Occurrence):
+                target_comp = active_target.component
+
+            if not target_comp:
                 return
 
-            # Toggle ONLY the sketch folder lightbulb on the active component itself.
-            # Child sketch lightbulbs remain untouched.
-            active_comp.isSketchFolderLightBulbOn = not active_comp.isSketchFolderLightBulbOn
+            # Toggle ONLY the parent Sketches folder lightbulb of the active component
+            current_state = target_comp.isSketchFolderLightBulbOn
+            target_comp.isSketchFolderLightBulbOn = not current_state
 
-        except:
-            if _ui:
-                _ui.messageBox(f'Execution Failed:\n{traceback.format_exc()}')
+            app.activeViewport.refresh()
 
-def run(context):
-    global _app, _ui, _cmd_def
-    try:
-        _app = adsk.core.Application.get()
-        _ui = _app.userInterface
+        except Exception:
+            if ui:
+                ui.messageBox(f'Failed to execute toggle:\n{traceback.format_exc()}')
 
-        stop(context)
-
-        # 1. Create Command Definition
-        _cmd_def = _ui.commandDefinitions.addButtonDefinition(
-            CMD_ID,
-            CMD_NAME,
-            CMD_TOOLTIP,
-            ''
-        )
-
-        # 2. Attach Event Handler
-        cmd_created_handler = ToggleSketchesCommandCreatedEventHandler()
-        _cmd_def.commandCreated.add(cmd_created_handler)
-        _handlers.append(cmd_created_handler)
-
-        # 3. Mount to QAT
-        qat = _ui.toolbars.itemById('QAT')
-        if qat:
-            qat.controls.addCommand(_cmd_def)
-        else:
-            panel = _ui.allToolbarPanels.itemById('SolidScriptsAddinsPanel')
-            if panel:
-                panel.controls.addCommand(_cmd_def)
-
-    except:
-        if _ui:
-            _ui.messageBox(f'Run Failed:\n{traceback.format_exc()}')
-
-def stop(context):
-    global _cmd_def, _handlers
-    try:
-        if _ui:
-            qat = _ui.toolbars.itemById('QAT')
-            if qat:
-                ctrl = qat.controls.itemById(CMD_ID)
-                if ctrl:
-                    ctrl.deleteMe()
-
-            panel = _ui.allToolbarPanels.itemById('SolidScriptsAddinsPanel')
-            if panel:
-                ctrl = panel.controls.itemById(CMD_ID)
-                if ctrl:
-                    ctrl.deleteMe()
-
-        if _cmd_def and _cmd_def.isValid:
-            _cmd_def.deleteMe()
-            _cmd_def = None
-
-        _handlers.clear()
-    except:
-        pass
+class SketchVisibilityToggleCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    def notify(self, args):
+        try:
+            cmd = args.command
+            onExecute = SketchVisibilityToggleExecuteHandler()
+            cmd.execute.add(onExecute)
+            handlers.append(onExecute)
+        except Exception:
+            pass
 
 def run(context):
-    global _app, _ui, _cmd_def
     try:
-        _app = adsk.core.Application.get()
-        _ui = _app.userInterface
+        app = adsk.core.Application.get()
+        ui = app.userInterface
 
-        stop(context)
+        # Delete existing command definition to avoid conflicts
+        cmdDef = ui.commandDefinitions.itemById('toggle_sketches')
+        if cmdDef:
+            cmdDef.deleteMe()
 
-        # 1. Create Command Definition
-        _cmd_def = _ui.commandDefinitions.addButtonDefinition(
-            CMD_ID,
-            CMD_NAME,
-            CMD_TOOLTIP,
-            './Resources'
+        # Create command definition
+        cmdDef = ui.commandDefinitions.addButtonDefinition(
+            'toggle_sketches',
+            'Toggle Sketches',
+            'Toggles visibility of the parent sketch folder for the active component',
+            './resources'
         )
 
-        # 2. Attach Created Event Handler
-        cmd_created_handler = ToggleSketchesCommandCreatedEventHandler()
-        _cmd_def.commandCreated.add(cmd_created_handler)
-        _handlers.append(cmd_created_handler)
+        # Add execute handler
+        onCommandCreated = SketchVisibilityToggleCommandCreatedHandler()
+        cmdDef.commandCreated.add(onCommandCreated)
+        handlers.append(onCommandCreated)
 
-        # 3. Add to QAT toolbar (or fallback panel)
-        qat = _ui.toolbars.itemById('QAT')
+        # 1. Add to SolidCreatePanel (Enables the 3-dot overflow menu for custom keyboard shortcuts)
+        createPanel = ui.allToolbarPanels.itemById('SolidCreatePanel')
+        if createPanel:
+            createControl = createPanel.controls.addCommand(cmdDef)
+            createControl.isPromotedByDefault = True
+            createControl.isPromoted = True
+
+        # 2. Add to Quick Access Toolbar
+        qat = ui.toolbars.itemById('QAT')
         if qat:
-            qat.controls.addCommand(_cmd_def)
-        else:
-            panel = _ui.allToolbarPanels.itemById('SolidScriptsAddinsPanel')
-            if panel:
-                panel.controls.addCommand(_cmd_def)
+            qat.controls.addCommand(cmdDef)
 
-    except:
-        if _ui:
-            _ui.messageBox(f'Run Failed:\n{traceback.format_exc()}')
+    except Exception:
+        if ui:
+            ui.messageBox(f'Failed to run add-in:\n{traceback.format_exc()}')
 
 def stop(context):
-    global _cmd_def, _handlers
     try:
-        if _ui:
-            # Remove control from QAT
-            qat = _ui.toolbars.itemById('QAT')
-            if qat:
-                ctrl = qat.controls.itemById(CMD_ID)
-                if ctrl:
-                    ctrl.deleteMe()
+        app = adsk.core.Application.get()
+        ui = app.userInterface
 
-            # Remove control from fallback panel
-            panel = _ui.allToolbarPanels.itemById('SolidScriptsAddinsPanel')
-            if panel:
-                ctrl = panel.controls.itemById(CMD_ID)
-                if ctrl:
-                    ctrl.deleteMe()
+        # Remove from SolidCreatePanel
+        createPanel = ui.allToolbarPanels.itemById('SolidCreatePanel')
+        if createPanel:
+            createControl = createPanel.controls.itemById('toggle_sketches')
+            if createControl:
+                createControl.deleteMe()
 
-        if _cmd_def and _cmd_def.isValid:
-            _cmd_def.deleteMe()
-            _cmd_def = None
+        # Remove from Quick Access Toolbar
+        qat = ui.toolbars.itemById('QAT')
+        if qat:
+            qatControl = qat.controls.itemById('toggle_sketches')
+            if qatControl:
+                qatControl.deleteMe()
 
-        _handlers.clear()
-    except:
-        pass
-    
+        # Delete command definition
+        cmdDef = ui.commandDefinitions.itemById('toggle_sketches')
+        if cmdDef:
+            cmdDef.deleteMe()
+
+    except Exception:
+        if ui:
+            ui.messageBox(f'Stop failed for add-in:\n{traceback.format_exc()}')
